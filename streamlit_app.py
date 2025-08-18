@@ -72,6 +72,8 @@ if 'app_initialized' not in st.session_state:
     st.session_state.app_initialized = False
     st.session_state.mr_data = []
     st.session_state.processing = False
+    st.session_state.logged_in = False
+    st.session_state.user = None
 
 # Initialize app
 @st.cache_resource
@@ -85,6 +87,21 @@ def initialize_app():
     except Exception as e:
         st.error(f"Failed to initialize app: {e}")
         return None, None, None, False
+
+def login_page(data_service):
+    """Render the login page"""
+    st.header("Login")
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login"):
+        user = data_service.login(email, password)
+        if user:
+            st.session_state.logged_in = True
+            st.session_state.user = user
+            st.rerun()
+        else:
+            st.error("Invalid email or password")
 
 def main():
     """Main Streamlit application"""
@@ -110,6 +127,10 @@ def main():
         - OPENAI_ASSISTANT_ID
         """)
         return
+
+    if not st.session_state.get("logged_in"):
+        login_page(data_service)
+        return
     
     # Load MR data
     if not st.session_state.app_initialized:
@@ -124,6 +145,12 @@ def main():
     
     # Sidebar Configuration
     st.sidebar.header("🎛️ Configuration")
+
+    st.sidebar.markdown(f"Welcome, {st.session_state.user['full_name']}")
+    if st.sidebar.button("Logout"):
+        st.session_state.logged_in = False
+        st.session_state.user = None
+        st.rerun()
     
     # Action Type
     action = st.sidebar.selectbox(
