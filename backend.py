@@ -135,6 +135,26 @@ class DataService:
         self.supabase = config.supabase
         self.cache = {}
 
+    def login(self, email: str, password: str) -> Optional[Dict[str, Any]]:
+        """Authenticate user against the user_profiles table."""
+        try:
+            response = self.supabase.table('user_profiles')\
+                .select('*')\
+                .eq('email', email)\
+                .eq('password', password)\
+                .single()\
+                .execute()
+
+            if response.data:
+                logger.info(f"User {email} logged in successfully.")
+                return response.data
+            else:
+                logger.warning(f"Login failed for user {email}.")
+                return None
+        except Exception as e:
+            logger.error(f"Error during login for user {email}: {e}")
+            return None
+
     def get_medical_representatives(self) -> List[Dict[str, Any]]:
         """Get all active medical representatives"""
         try:
