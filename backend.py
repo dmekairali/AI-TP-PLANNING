@@ -45,7 +45,19 @@ except ImportError:
     import nest_asyncio
 
 # Apply nest_asyncio for async compatibility
-nest_asyncio.apply()
+def setup_asyncio():
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            nest_asyncio.apply()
+    except RuntimeError:
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        except:
+            pass
+
+setup_asyncio()
 
 # ================================================================
 # CONFIGURATION CLASS
