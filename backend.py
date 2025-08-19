@@ -68,11 +68,6 @@ class Config:
     
     def __init__(self):
 
-        # Quick v2 API fix
-        self.openai_client = OpenAI(
-        api_key=self.openai_api_key,
-        default_headers={"OpenAI-Beta": "assistants=v2"}
-        )
         # Supabase configuration
         self.supabase_url = os.getenv('SUPABASE_URL')
         self.supabase_key = os.getenv('SUPABASE_ANON_KEY')
@@ -86,7 +81,13 @@ class Config:
         
         # Initialize clients
         self.supabase = create_client(self.supabase_url, self.supabase_key)
-        self.openai_client = OpenAI(api_key=self.openai_api_key)
+        
+        # V2 API - Initialize OpenAI client with v2 header
+        self.openai_client = OpenAI(
+            api_key=self.openai_api_key,
+            default_headers={"OpenAI-Beta": "assistants=v2"}
+        )
+
 
 # ================================================================
 # DATA SERVICE LAYER
@@ -722,69 +723,110 @@ class RealAIService:
             return content
 
     async def _call_openai_assistant_with_retry(self, ai_input: Dict, existing_thread_id: str = None) -> tuple[Dict, str]:
-        """Call OpenAI assistant with retry logic and enhanced JSON parsing"""
+        """Call OpenAI assistant with v2 API and enhanced JSON parsing"""
         try:
+            # Create or use existing thread
             if existing_thread_id:
                 thread_id = existing_thread_id
                 logger.info(f"Using existing thread: {thread_id}")
             else:
+                # V2 API - Create thread
                 thread = self.openai_client.beta.threads.create()
                 thread_id = thread.id
                 logger.info(f"Created new thread: {thread_id}")
 
+            # V2 API - Create message
             message = self.openai_client.beta.threads.messages.create(
                 thread_id=thread_id,
                 role="user",
                 content=json.dumps(ai_input)
             )
 
+            # V2 API - Create and run
             run = self.openai_client.beta.threads.runs.create(
                 thread_id=thread_id,
                 assistant_id=self.assistant_id
             )
 
-            while run.status in ['queued', 'in_progress', 'cancelling']:
+            # V2 API - Poll for completion
+            max_retries = 60  # 60 seconds timeout
+            retry_count = 0
+            
+            while run.status in ['queued', 'in_progress', 'cancelling'] and retry_count < max_retries:
                 await asyncio.sleep(1)
+                retry_count += 1
+                
+                # V2 API - Retrieve run status
                 run = self.openai_client.beta.threads.runs.retrieve(
                     thread_id=thread_id,
                     run_id=run.id
                 )
+                
+                logger.debug(f"Run status: {run.status} (attempt {retry_count})")
 
+            # Check final status
             if run.status == 'completed':
+                # V2 API - List messages
                 messages = self.openai_client.beta.threads.messages.list(
-                    thread_id=thread_id
+                    thread_id=thread_id,
+                    order="desc",
+                    limit=1
                 )
                 
-                response_content = messages.data[0].content[0].text.value
-                
-                # ENHANCED JSON PARSING
-                try:
-                    # Direct JSON parsing
-                    plan_result = json.loads(response_content)
-                    logger.info("✅ Direct JSON parsing successful")
-                    return plan_result, thread_id
-                except json.JSONDecodeError:
-                    # Try markdown extraction
-                    logger.info("🔄 Trying markdown extraction...")
-                    cleaned_content = self._extract_json_from_markdown(response_content)
+                if messages.data:
+                    # V2 API - Extract content
+                    message_content = messages.data[0].content
+                    
+                    # Handle different content types in v2
+                    if isinstance(message_content, list) and len(message_content) > 0:
+                        # Get text content from the first content block
+                        content_block = message_content[0]
+                        if hasattr(content_block, 'text'):
+                            response_content = content_block.text.value
+                        elif hasattr(content_block, 'content'):
+                            response_content = str(content_block.content)
+                        else:
+                            response_content = str(content_block)
+                    else:
+                        response_content = str(message_content)
+                    
+                    # ENHANCED JSON PARSING (same as before)
                     try:
-                        plan_result = json.loads(cleaned_content)
-                        logger.info("✅ Markdown extraction successful")
+                        # Direct JSON parsing
+                        plan_result = json.loads(response_content)
+                        logger.info("✅ Direct JSON parsing successful")
                         return plan_result, thread_id
                     except json.JSONDecodeError:
-                        # Try manual cleanup
-                        logger.info("🔄 Trying manual cleanup...")
-                        manual_cleaned = self._manual_json_cleanup(response_content)
+                        # Try markdown extraction
+                        logger.info("🔄 Trying markdown extraction...")
+                        cleaned_content = self._extract_json_from_markdown(response_content)
                         try:
-                            plan_result = json.loads(manual_cleaned)
-                            logger.info("✅ Manual cleanup successful")
+                            plan_result = json.loads(cleaned_content)
+                            logger.info("✅ Markdown extraction successful")
                             return plan_result, thread_id
-                        except json.JSONDecodeError as e:
-                            logger.error(f"❌ All parsing methods failed: {e}")
-                            logger.error(f"Content preview: {response_content[:300]}")
-                            raise Exception(f"Invalid JSON response from AI after all cleanup attempts: {response_content[:200]}...")
+                        except json.JSONDecodeError:
+                            # Try manual cleanup
+                            logger.info("🔄 Trying manual cleanup...")
+                            manual_cleaned = self._manual_json_cleanup(response_content)
+                            try:
+                                plan_result = json.loads(manual_cleaned)
+                                logger.info("✅ Manual cleanup successful")
+                                return plan_result, thread_id
+                            except json.JSONDecodeError as e:
+                                logger.error(f"❌ All parsing methods failed: {e}")
+                                logger.error(f"Content preview: {response_content[:300]}")
+                                raise Exception(f"Invalid JSON response from AI after all cleanup attempts: {response_content[:200]}...")
+                else:
+                    raise Exception("No response messages found")
+                    
+            elif run.status == 'failed':
+                # V2 API - Get error details
+                error_info = getattr(run, 'last_error', 'Unknown error')
+                raise Exception(f"AI assistant run failed: {error_info}")
+            elif retry_count >= max_retries:
+                raise Exception(f"AI assistant run timed out after {max_retries} seconds. Status: {run.status}")
             else:
-                raise Exception(f"AI assistant run failed with status: {run.status}")
+                raise Exception(f"AI assistant run ended with unexpected status: {run.status}")
 
         except Exception as e:
             logger.error(f"OpenAI assistant call failed: {e}")
