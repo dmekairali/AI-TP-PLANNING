@@ -67,6 +67,12 @@ class Config:
     """Configuration class for database and API connections"""
     
     def __init__(self):
+
+        # Quick v2 API fix
+        self.openai_client = OpenAI(
+        api_key=self.openai_api_key,
+        default_headers={"OpenAI-Beta": "assistants=v2"}
+        )
         # Supabase configuration
         self.supabase_url = os.getenv('SUPABASE_URL')
         self.supabase_key = os.getenv('SUPABASE_ANON_KEY')
