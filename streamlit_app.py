@@ -181,8 +181,15 @@ def main():
         available_mrs = data_service.get_mrs_with_plans(month, year)
         st.info(f"📋 Showing {len(available_mrs)} MRs with existing plans for {month:02d}/{year}")
     else:
-        available_mrs = st.session_state.mr_data
-        st.info(f"📋 Showing all {len(available_mrs)} active MRs")
+        mrs_with_plans = data_service.get_mrs_with_plans(month, year)
+        mrs_with_plans_names = {mr['name'] for mr in mrs_with_plans}
+
+        available_mrs = [
+            mr for mr in st.session_state.mr_data
+            if mr['name'] not in mrs_with_plans_names
+        ]
+
+        st.info(f"📋 Showing {len(available_mrs)} MRs without a plan for {month:02d}/{year}")
     
     # Main Content Area
     if available_mrs:
