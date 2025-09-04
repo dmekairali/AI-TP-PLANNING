@@ -203,9 +203,15 @@ def main():
         mr_options = [f"{mr['name']} ({mr['territory']})" for mr in available_mrs]
         mr_names = [mr['name'] for mr in available_mrs]
         
+        # "Select All" checkbox
+        select_all = st.checkbox("Select All MRs")
+
+        default_selection = mr_options if select_all else []
+
         selected_mr_display = st.multiselect(
             "Select Medical Representatives",
             mr_options,
+            default=default_selection,
             help="Choose one or more MRs to generate plans for"
         )
         
@@ -366,76 +372,83 @@ def process_plans(selected_mr_names, month, year, action, tier_mix, enable_clust
     
     # Process each MR
     for i, mr_name in enumerate(selected_mr_names):
-        try:
-            # Update progress
-            progress = (i + 1) / len(selected_mr_names)
-            progress_bar.progress(progress)
-            status_text.text(f"Processing {mr_name} ({i+1}/{len(selected_mr_names)})")
-            
-            # Load customers
-            with st.spinner(f"Loading customers for {mr_name}..."):
-                customers = data_service.get_customer_data(mr_name)
-            
-            if not customers:
-                st.error(f"❌ No customers found for {mr_name}")
-                results['errors'] += 1
-                continue
-            
-            # Generate plan
-            with st.spinner(f"🤖 Generating enhanced plan for {mr_name}..."):
-                plan_result = ai_service.generate_monthly_plan_with_clustering(
-                    mr_name, month, year, customers, action, tier_mix,
-                    data_service, enable_clustering, ui_config
-                )
-            
-            # Save to database
-            with st.spinner(f"💾 Saving plan for {mr_name}..."):
-                thread_id = plan_result.get('thread_id')
-                clustering_metadata = plan_result.get('clustering_metadata', {})
-                clean_plan_result = {k: v for k, v in plan_result.items()
-                                   if k not in ['thread_id', 'clustering_metadata']}
+        retries = 2
+        for attempt in range(retries):
+            try:
+                # Update progress
+                progress = (i + 1) / len(selected_mr_names)
+                progress_bar.progress(progress)
+                status_text.text(f"Processing {mr_name} ({i+1}/{len(selected_mr_names)}) - Attempt {attempt + 1}")
                 
-                plan_data = {
-                    'mr_name': mr_name,
-                    'plan_month': month,
-                    'plan_year': year,
-                    'original_plan_json': clean_plan_result,
-                    'current_plan_json': clean_plan_result,
-                    'current_revision': 0 if action == 'NEW_PLAN' else 1,
-                    'status': 'ACTIVE',
-                    'created_at': datetime.now().isoformat(),
-                    'updated_at': datetime.now().isoformat(),
-                    'total_customers': len(customers),
-                    'total_planned_visits': clean_plan_result['executive_summary']['planned_total_visits'],
-                    'total_revenue_target': clean_plan_result['executive_summary']['expected_revenue'],
-                    'generation_method': f'ai_enhanced_clustering_v3_{tier_mix}',
-                    'data_quality_score': 0.99,
-                    'thread_id': thread_id
-                }
+                # Load customers
+                with st.spinner(f"Loading customers for {mr_name}..."):
+                    customers = data_service.get_customer_data(mr_name)
                 
-                data_service.save_monthly_plan(plan_data)
-            
-            # Update results
-            visits = clean_plan_result['executive_summary']['planned_total_visits']
-            revenue = clean_plan_result['executive_summary']['expected_revenue']
-            
-            results['completed'] += 1
-            results['total_customers'] += len(customers)
-            results['total_visits'] += visits
-            results['total_revenue'] += revenue
-            
-            # Show success
-            clusters_info = ""
-            if clustering_metadata.get('clustering_enabled'):
-                total_clusters = clustering_metadata.get('total_clusters', 0)
-                total_areas = clustering_metadata.get('total_areas', 0)
-                clusters_info = f"🗺️ {total_clusters}C/{total_areas}A"
-            
-            st.success(f"✅ {mr_name}: {visits} visits, ₹{revenue:,.0f} revenue {clusters_info}")
-            
-        except Exception as e:
-            results['errors'] += 1
-            st.error(f"❌ {mr_name}: Processing failed - {str(e)}")
+                if not customers:
+                    st.error(f"❌ No customers found for {mr_name}")
+                    results['errors'] += 1
+                    break
+
+                # Generate plan
+                with st.spinner(f"🤖 Generating enhanced plan for {mr_name}..."):
+                    plan_result = ai_service.generate_monthly_plan_with_clustering(
+                        mr_name, month, year, customers, action, tier_mix,
+                        data_service, enable_clustering, ui_config
+                    )
+
+                # Save to database
+                with st.spinner(f"💾 Saving plan for {mr_name}..."):
+                    thread_id = plan_result.get('thread_id')
+                    clustering_metadata = plan_result.get('clustering_metadata', {})
+                    clean_plan_result = {k: v for k, v in plan_result.items()
+                                       if k not in ['thread_id', 'clustering_metadata']}
+
+                    plan_data = {
+                        'mr_name': mr_name,
+                        'plan_month': month,
+                        'plan_year': year,
+                        'original_plan_json': clean_plan_result,
+                        'current_plan_json': clean_plan_result,
+                        'current_revision': 0 if action == 'NEW_PLAN' else 1,
+                        'status': 'ACTIVE',
+                        'created_at': datetime.now().isoformat(),
+                        'updated_at': datetime.now().isoformat(),
+                        'total_customers': len(customers),
+                        'total_planned_visits': clean_plan_result['executive_summary']['planned_total_visits'],
+                        'total_revenue_target': clean_plan_result['executive_summary']['expected_revenue'],
+                        'generation_method': f'ai_enhanced_clustering_v3_{tier_mix}',
+                        'data_quality_score': 0.99,
+                        'thread_id': thread_id
+                    }
+
+                    data_service.save_monthly_plan(plan_data)
+
+                # Update results
+                visits = clean_plan_result['executive_summary']['planned_total_visits']
+                revenue = clean_plan_result['executive_summary']['expected_revenue']
+
+                results['completed'] += 1
+                results['total_customers'] += len(customers)
+                results['total_visits'] += visits
+                results['total_revenue'] += revenue
+
+                # Show success
+                clusters_info = ""
+                if clustering_metadata.get('clustering_enabled'):
+                    total_clusters = clustering_metadata.get('total_clusters', 0)
+                    total_areas = clustering_metadata.get('total_areas', 0)
+                    clusters_info = f"🗺️ {total_clusters}C/{total_areas}A"
+
+                st.success(f"✅ {mr_name}: {visits} visits, ₹{revenue:,.0f} revenue {clusters_info}")
+                break  # Exit retry loop on success
+
+            except Exception as e:
+                if attempt < retries - 1:
+                    st.warning(f"⚠️ {mr_name}: Attempt {attempt + 1} failed, retrying...")
+                    time.sleep(1)  # Wait before retrying
+                else:
+                    results['errors'] += 1
+                    st.error(f"❌ {mr_name}: Processing failed after {retries} attempts - {str(e)}")
         
         time.sleep(0.5)  # Brief pause for UI updates
     
