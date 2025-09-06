@@ -1,0 +1,56 @@
+name: Automated AI Planner Jobs
+
+on:
+  schedule:
+    # Run the new plan job at a random time between 12:00 AM and 12:59 AM on the 1st of every month
+    - cron: '0 0 1 * *'
+    # Run the revision job at a random time between 12:00 PM and 12:59 PM every Sunday
+    - cron: '0 12 * * 0'
+  workflow_dispatch:
+
+jobs:
+  new_plan:
+    if: github.event.schedule == '0 0 1 * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run new plan job
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_ASSISTANT_ID: ${{ secrets.OPENAI_ASSISTANT_ID }}
+        run: python run_jobs.py new_plan
+
+  revision:
+    if: github.event.schedule == '0 12 * * 0'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run revision job
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_ASSISTANT_ID: ${{ secrets.OPENAI_ASSISTANT_ID }}
+        run: python run_jobs.py revision
